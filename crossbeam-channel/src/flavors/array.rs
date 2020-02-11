@@ -77,7 +77,7 @@ pub struct Channel<T> {
     tail: CachePadded<AtomicUsize>,
 
     /// The buffer holding slots.
-    buffer: *mut Slot<T>,
+    buffer: *mut Slot<CachePadded<T>>,
 
     /// The channel capacity.
     cap: usize,
@@ -114,7 +114,7 @@ impl<T> Channel<T> {
 
         // Allocate a buffer of `cap` slots.
         let buffer = {
-            let mut v = Vec::<Slot<T>>::with_capacity(cap);
+            let mut v = Vec::<Slot<CachePadded<T>>>::with_capacity(cap);
             let ptr = v.as_mut_ptr();
             mem::forget(v);
             ptr
@@ -194,7 +194,7 @@ impl<T> Channel<T> {
                 ) {
                     Ok(_) => {
                         // Prepare the token for the follow-up call to `write`.
-                        token.array.slot = slot as *const Slot<T> as *const u8;
+                        token.array.slot = slot as *const Slot<CachePadded<T>> as *const u8;
                         token.array.stamp = tail + 1;
                         return true;
                     }
@@ -230,10 +230,10 @@ impl<T> Channel<T> {
             return Err(msg);
         }
 
-        let slot: &Slot<T> = &*(token.array.slot as *const Slot<T>);
+        let slot: &Slot<CachePadded<T>> = &*(token.array.slot as *const Slot<CachePadded<T>>);
 
         // Write the message into the slot and update the stamp.
-        slot.msg.get().write(msg);
+        slot.msg.get().write(CachePadded::from(msg));
         slot.stamp.store(token.array.stamp, Ordering::Release);
 
         // Wake a sleeping receiver.
@@ -276,7 +276,7 @@ impl<T> Channel<T> {
                 ) {
                     Ok(_) => {
                         // Prepare the token for the follow-up call to `read`.
-                        token.array.slot = slot as *const Slot<T> as *const u8;
+                        token.array.slot = slot as *const Slot<CachePadded<T>> as *const u8;
                         token.array.stamp = head.wrapping_add(self.one_lap);
                         return true;
                     }
@@ -320,7 +320,7 @@ impl<T> Channel<T> {
             return Err(());
         }
 
-        let slot: &Slot<T> = &*(token.array.slot as *const Slot<T>);
+        let slot: &Slot<CachePadded<T>> = &*(token.array.slot as *const Slot<CachePadded<T>>);
 
         // Read the message from the slot and update the stamp.
         let msg = slot.msg.get().read();
@@ -328,7 +328,7 @@ impl<T> Channel<T> {
 
         // Wake a sleeping sender.
         self.senders.notify();
-        Ok(msg)
+        Ok(msg.into_inner())
     }
 
     /// Attempts to send a message into the channel.
