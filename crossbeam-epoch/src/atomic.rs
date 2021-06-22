@@ -309,6 +309,47 @@ impl<T> Atomic<T> {
     pub fn new(init: T) -> Atomic<T> {
         Self::init(init)
     }
+
+    /// Returns a new null atomic pointer.
+    ///
+    /// This allows creating a null atomic pointer in a constant context on stable Rust.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crossbeam_epoch::Atomic;
+    ///
+    /// static A: Atomic<i32> = Atomic::<i32>::const_null();
+    /// ```
+    #[cfg(not(crossbeam_loom))]
+    pub const fn const_null() -> Self {
+        Self {
+            data: AtomicUsize::new(0),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> Atomic<[MaybeUninit<T>]> {
+    /// Returns a new null atomic pointer.
+    ///
+    /// This allows creating a null atomic pointer in a constant context on stable Rust.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crossbeam_epoch::Atomic;
+    /// use std::mem::MaybeUninit;
+    ///
+    /// static A: Atomic<[MaybeUninit<i32>]> = Atomic::<[MaybeUninit<_>]>::const_null();
+    /// ```
+    #[cfg(not(crossbeam_loom))]
+    pub const fn const_null() -> Self {
+        Self {
+            data: AtomicUsize::new(0),
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<T: ?Sized + Pointable> Atomic<T> {
@@ -342,7 +383,6 @@ impl<T: ?Sized + Pointable> Atomic<T> {
     ///
     /// let a = Atomic::<i32>::null();
     /// ```
-    ///
     #[cfg_attr(all(feature = "nightly", not(crossbeam_loom)), const_fn::const_fn)]
     pub fn null() -> Atomic<T> {
         Self {
@@ -1589,7 +1629,7 @@ impl<T: ?Sized + Pointable> Default for Shared<'_, T> {
 
 #[cfg(all(test, not(crossbeam_loom)))]
 mod tests {
-    use super::{Owned, Shared};
+    use super::{Atomic, Owned, Shared};
     use std::mem::MaybeUninit;
 
     #[test]
@@ -1602,11 +1642,10 @@ mod tests {
         Shared::<i64>::null().with_tag(7);
     }
 
-    #[cfg(feature = "nightly")]
     #[test]
     fn const_atomic_null() {
-        use super::Atomic;
-        static _U: Atomic<u8> = Atomic::<u8>::null();
+        static _U1: Atomic<u8> = Atomic::<u8>::const_null();
+        static _U2: Atomic<[MaybeUninit<u8>]> = Atomic::<[MaybeUninit<_>]>::const_null();
     }
 
     #[test]
