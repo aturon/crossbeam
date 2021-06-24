@@ -94,6 +94,12 @@ pub use crate::backoff::Backoff;
 
 use cfg_if::cfg_if;
 
+mod timestamp;
+pub use timestamp::Timestamp;
+
+mod cyclic_timestamp;
+pub use cyclic_timestamp::CyclicTimestamp;
+
 cfg_if! {
     if #[cfg(feature = "std")] {
         pub mod sync;
