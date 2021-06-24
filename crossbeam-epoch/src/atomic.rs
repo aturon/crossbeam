@@ -869,6 +869,52 @@ impl<T: ?Sized + Pointable> Atomic<T> {
             Owned::from_usize(self.data.into_inner())
         }
     }
+
+    /// Takes ownership of the pointee if it is non-null.
+    ///
+    /// This consumes the atomic and converts it into [`Owned`]. As [`Atomic`] doesn't have a
+    /// destructor and doesn't drop the pointee while [`Owned`] does, this is suitable for
+    /// destructors of data structures.
+    ///
+    /// # Safety
+    ///
+    /// This method may be called only if the pointer is valid and nobody else is holding a
+    /// reference to the same object, or the pointer is null..
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use std::mem;
+    /// # use crossbeam_epoch::Atomic;
+    /// struct DataStructure {
+    ///     ptr: Atomic<usize>,
+    /// }
+    ///
+    /// impl Drop for DataStructure {
+    ///     fn drop(&mut self) {
+    ///         // By now the DataStructure lives only in our thread and we are sure we don't hold
+    ///         // any Shared or & to it ourselves, but it may be null, so we have to be careful.
+    ///         let old = mem::replace(&mut self.ptr, Atomic::null());
+    ///         unsafe {
+    ///             if let Option::Some(x) = old.try_into_owned() {
+    ///                 drop(x)
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub unsafe fn try_into_owned(self) -> Option<Owned<T>> {
+        // FIXME: See self.into_owned()
+        #[cfg(crossbeam_loom)]
+        let data = self.data.unsync_load();
+        #[cfg(not(crossbeam_loom))]
+        let data = self.data.into_inner();
+        if decompose_tag::<T>(data).0 == 0 {
+            Option::None
+        } else {
+            Option::Some(Owned::from_usize(data))
+        }
+    }
 }
 
 impl<T: ?Sized + Pointable> fmt::Debug for Atomic<T> {
@@ -1477,6 +1523,36 @@ impl<'g, T: ?Sized + Pointable> Shared<'g, T> {
     pub unsafe fn into_owned(self) -> Owned<T> {
         debug_assert!(!self.is_null(), "converting a null `Shared` into `Owned`");
         Owned::from_usize(self.data)
+    }
+
+    /// Takes ownership of the pointee if it is not null.
+    ///
+    /// # Safety
+    ///
+    /// This method may be called only if the pointer is valid and nobody else is holding a
+    /// reference to the same object, or if the pointer is null.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crossbeam_epoch::{self as epoch, Atomic};
+    /// use std::sync::atomic::Ordering::SeqCst;
+    ///
+    /// let a = Atomic::new(1234);
+    /// unsafe {
+    ///     let guard = &epoch::unprotected();
+    ///     let p = a.load(SeqCst, guard);
+    ///     if let Option::Some(x) = p.try_into_owned() {
+    ///         drop(x);
+    ///     }
+    /// }
+    /// ```
+    pub unsafe fn try_into_owned(self) -> Option<Owned<T>> {
+        if self.is_null() {
+            Option::None
+        } else {
+            Option::Some(Owned::from_usize(self.data))
+        }
     }
 
     /// Returns the tag stored within the pointer.
