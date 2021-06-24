@@ -406,6 +406,7 @@ fn both_ready() {
     .unwrap();
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn loop_try() {
     const RUNS: usize = 20;
@@ -690,6 +691,9 @@ fn nesting() {
 
 #[test]
 fn stress_recv() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 10_000;
 
     let (s1, r1) = unbounded();
@@ -728,6 +732,9 @@ fn stress_recv() {
 
 #[test]
 fn stress_send() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 10_000;
 
     let (s1, r1) = bounded(0);
@@ -763,6 +770,9 @@ fn stress_send() {
 
 #[test]
 fn stress_mixed() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 10_000;
 
     let (s1, r1) = bounded(0);
@@ -940,6 +950,9 @@ fn matching_with_leftover() {
 
 #[test]
 fn channel_through_channel() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 1000;
 
     type T = Box<dyn Any + Send>;
@@ -998,6 +1011,9 @@ fn channel_through_channel() {
 
 #[test]
 fn linearizable_try() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 100_000;
 
     for step in 0..2 {
@@ -1050,6 +1066,9 @@ fn linearizable_try() {
 
 #[test]
 fn linearizable_timeout() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 100_000;
 
     for step in 0..2 {
@@ -1102,6 +1121,9 @@ fn linearizable_timeout() {
 
 #[test]
 fn fairness1() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 10_000;
 
     let (s1, r1) = bounded::<()>(COUNT);
@@ -1148,6 +1170,9 @@ fn fairness1() {
 
 #[test]
 fn fairness2() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 10_000;
 
     let (s1, r1) = unbounded::<()>();
@@ -1264,6 +1289,9 @@ fn send_and_clone() {
 
 #[test]
 fn reuse() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 10_000;
 
     let (s1, r1) = bounded(0);

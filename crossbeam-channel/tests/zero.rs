@@ -187,6 +187,9 @@ fn send_timeout() {
 
 #[test]
 fn len() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 25_000;
 
     let (s, r) = bounded(0);
@@ -249,6 +252,9 @@ fn disconnect_wakes_receiver() {
 
 #[test]
 fn spsc() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 100_000;
 
     let (s, r) = bounded(0);
@@ -271,6 +277,9 @@ fn spsc() {
 
 #[test]
 fn mpmc() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 25_000;
     const THREADS: usize = 4;
 
@@ -303,6 +312,9 @@ fn mpmc() {
 
 #[test]
 fn stress_oneshot() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 10_000;
 
     for _ in 0..COUNT {
@@ -316,6 +328,7 @@ fn stress_oneshot() {
     }
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn stress_iter() {
     const COUNT: usize = 1000;
@@ -383,6 +396,7 @@ fn stress_timeout_two_threads() {
     .unwrap();
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn drops() {
     static DROPS: AtomicUsize = AtomicUsize::new(0);
@@ -428,6 +442,9 @@ fn drops() {
 
 #[test]
 fn fairness() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 10_000;
 
     let (s1, r1) = bounded::<()>(0);
@@ -459,6 +476,9 @@ fn fairness() {
 
 #[test]
 fn fairness_duplicates() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 10_000;
 
     let (s, r) = bounded::<()>(0);
@@ -517,6 +537,9 @@ fn recv_in_send() {
 
 #[test]
 fn channel_through_channel() {
+    #[cfg(miri)]
+    const COUNT: usize = 100;
+    #[cfg(not(miri))]
     const COUNT: usize = 1000;
 
     type T = Box<dyn Any + Send>;

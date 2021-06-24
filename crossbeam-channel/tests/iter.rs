@@ -54,6 +54,7 @@ fn recv_iter_break() {
     .unwrap();
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn recv_try_iter() {
     let (request_s, request_r) = unbounded();

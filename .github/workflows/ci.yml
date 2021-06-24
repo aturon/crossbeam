@@ -123,6 +123,15 @@ jobs:
       - name: clippy
         run: ./ci/clippy.sh
 
+  # Run miri.
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: miri
+        run: ./ci/miri.sh
+
   # Run sanitizers.
   san:
     name: san
@@ -172,6 +181,7 @@ jobs:
       - codegen
       - rustfmt
       - clippy
+      - miri
       - san
       - loom
       - docs

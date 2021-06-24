@@ -57,6 +57,7 @@ fn len_empty_full() {
     assert!(!q.is_full());
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn len() {
     const COUNT: usize = 25_000;
@@ -114,6 +115,7 @@ fn len() {
     assert_eq!(q.len(), 0);
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn spsc() {
     const COUNT: usize = 100_000;
@@ -142,6 +144,7 @@ fn spsc() {
     .unwrap();
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn mpmc() {
     const COUNT: usize = 25_000;
@@ -178,6 +181,7 @@ fn mpmc() {
     }
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn drops() {
     const RUNS: usize = 100;
@@ -231,6 +235,9 @@ fn drops() {
 
 #[test]
 fn linearizable() {
+    #[cfg(miri)]
+    const COUNT: usize = 500;
+    #[cfg(not(miri))]
     const COUNT: usize = 25_000;
     const THREADS: usize = 4;
 

@@ -1,5 +1,7 @@
 //! Tests for the array channel flavor.
 
+#![cfg(not(miri))] // TODO: many assertions failed due to Miri is slow
+
 use std::any::Any;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;

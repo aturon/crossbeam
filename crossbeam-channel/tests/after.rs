@@ -1,5 +1,7 @@
 //! Tests for the after channel flavor.
 
+#![cfg(not(miri))] // TODO: many assertions failed due to Miri is slow
+
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::thread;

@@ -46,6 +46,9 @@ fn is_empty() {
 
 #[test]
 fn spsc() {
+    #[cfg(miri)]
+    const COUNT: usize = 500;
+    #[cfg(not(miri))]
     const COUNT: usize = 100_000;
 
     let q = Injector::new();
@@ -73,6 +76,9 @@ fn spsc() {
 
 #[test]
 fn mpmc() {
+    #[cfg(miri)]
+    const COUNT: usize = 500;
+    #[cfg(not(miri))]
     const COUNT: usize = 25_000;
     const THREADS: usize = 4;
 
@@ -111,6 +117,9 @@ fn mpmc() {
 #[test]
 fn stampede() {
     const THREADS: usize = 8;
+    #[cfg(miri)]
+    const COUNT: usize = 500;
+    #[cfg(not(miri))]
     const COUNT: usize = 50_000;
 
     let q = Injector::new();
@@ -152,6 +161,9 @@ fn stampede() {
 #[test]
 fn stress() {
     const THREADS: usize = 8;
+    #[cfg(miri)]
+    const COUNT: usize = 500;
+    #[cfg(not(miri))]
     const COUNT: usize = 50_000;
 
     let q = Injector::new();
@@ -208,6 +220,7 @@ fn stress() {
     .unwrap();
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn no_starvation() {
     const THREADS: usize = 8;
@@ -267,6 +280,7 @@ fn no_starvation() {
     .unwrap();
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn destructors() {
     const THREADS: usize = 8;

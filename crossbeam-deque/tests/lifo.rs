@@ -71,6 +71,9 @@ fn is_empty() {
 
 #[test]
 fn spsc() {
+    #[cfg(miri)]
+    const STEPS: usize = 500;
+    #[cfg(not(miri))]
     const STEPS: usize = 50_000;
 
     let w = Worker::new_lifo();
@@ -100,6 +103,9 @@ fn spsc() {
 #[test]
 fn stampede() {
     const THREADS: usize = 8;
+    #[cfg(miri)]
+    const COUNT: usize = 500;
+    #[cfg(not(miri))]
     const COUNT: usize = 50_000;
 
     let w = Worker::new_lifo();
@@ -141,6 +147,9 @@ fn stampede() {
 #[test]
 fn stress() {
     const THREADS: usize = 8;
+    #[cfg(miri)]
+    const COUNT: usize = 500;
+    #[cfg(not(miri))]
     const COUNT: usize = 50_000;
 
     let w = Worker::new_lifo();
@@ -197,6 +206,7 @@ fn stress() {
     .unwrap();
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn no_starvation() {
     const THREADS: usize = 8;
@@ -256,6 +266,7 @@ fn no_starvation() {
     .unwrap();
 }
 
+#[cfg_attr(miri, ignore)] // Miri is too slow
 #[test]
 fn destructors() {
     const THREADS: usize = 8;

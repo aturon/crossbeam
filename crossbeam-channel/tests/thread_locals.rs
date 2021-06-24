@@ -1,5 +1,7 @@
 //! Tests that make sure accessing thread-locals while exiting the thread doesn't cause panics.
 
+#![cfg(not(miri))] // error: abnormal termination: the evaluated program aborted execution
+
 use std::thread;
 use std::time::Duration;
 
