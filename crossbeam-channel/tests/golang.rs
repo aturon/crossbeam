@@ -52,6 +52,34 @@ impl<T> Chan<T> {
             .expect("sending into closed channel")
             .clone();
         let _ = s.send(msg);
+
+        // FIXME
+        // let guard = self
+        //     .inner
+        //     .lock()
+        //     .unwrap();
+
+        // match guard.s.as_ref() {
+        //     Some(ss) => {
+        //         let _ = ss.clone().send(msg);
+        //     }
+        //     None => {
+        //         std::mem::drop(guard);
+        //         panic!("sending into closed channel")
+        //     }
+        // }
+    }
+
+    fn try_send(&self, msg: T) -> bool {
+        let s = self
+            .inner
+            .lock()
+            .unwrap()
+            .s
+            .as_ref()
+            .expect("sending into closed channel")
+            .clone();
+        s.try_send(msg).is_ok()
     }
 
     fn try_recv(&self) -> Option<T> {
@@ -1487,7 +1515,274 @@ mod chan_test {
 
 // https://github.com/golang/go/blob/master/test/closedchan.go
 mod closedchan {
-    // TODO
+    use super::*;
+
+    trait GoChan {
+        fn send(&self, i32);
+        fn nbsend(&self, i32) -> bool;
+        fn recv(&self) -> Option<i32>;
+        fn nbrecv(&self) -> Option<i32>;
+        fn close(&self);
+        fn get_impl(&self) -> String;
+    }
+
+    struct XChan {
+        inner: Chan<i32>,
+    }
+
+    impl GoChan for XChan {
+        fn send(&self, n: i32) {
+            self.inner.send(n);
+        }
+        fn nbsend(&self, n: i32) -> bool {
+            self.inner.try_send(n)
+        }
+        fn recv(&self) -> Option<i32> {
+            self.inner.recv()
+        }
+        fn nbrecv(&self) -> Option<i32> {
+            self.inner.try_recv()
+        }
+        fn close(&self) {
+            self.inner.close()
+        }
+        fn get_impl(&self) -> String {
+            String::from("(<- operator)")
+        }
+    }
+
+    struct SChan {
+        inner: Chan<i32>,
+    }
+
+    impl GoChan for SChan {
+        fn send(&self, n: i32) {
+            select! {
+                send(self.inner.tx(), n) -> res => res.unwrap()
+            }
+        }
+        fn nbsend(&self, n: i32) -> bool {
+            select! {
+                default => { false },
+                send(self.inner.tx(), n) -> res => { res.unwrap(); true },
+            }
+        }
+        fn recv(&self) -> Option<i32> {
+            select! {
+                recv(self.inner.rx()) -> x => { x.ok() },
+            }
+        }
+        fn nbrecv(&self) -> Option<i32> {
+            select! {
+                default => { None },
+                recv(self.inner.rx()) -> x => { x.ok() }
+            }
+        }
+        fn close(&self) {
+            self.inner.close()
+        }
+        fn get_impl(&self) -> String {
+            String::from("(select)")
+        }
+    }
+
+    struct SSChan {
+        inner: Chan<i32>,
+        dummy: Chan<i32>,
+    }
+
+    impl GoChan for SSChan {
+        fn send(&self, n: i32) {
+            select! {
+                send(self.inner.tx(), n) -> _ => {},
+                recv(self.dummy.rx()) -> _ => { panic!("send") },
+            }
+        }
+        fn nbsend(&self, n: i32) -> bool {
+            select! {
+                default => { false },
+                send(self.inner.tx(), n) -> _ => { true },
+                recv(self.dummy.rx()) -> _ => { panic!("nbsend") },
+            }
+        }
+        fn recv(&self) -> Option<i32> {
+            select! {
+                recv(self.inner.rx()) -> x => { x.ok() },
+                recv(self.dummy.rx()) -> _ => { panic!("recv") },
+            }
+        }
+        fn nbrecv(&self) -> Option<i32> {
+            select! {
+                default => { None },
+                recv(self.inner.rx()) -> x => { x.ok() }
+                recv(self.dummy.rx()) -> _ => { panic!("nbrecv") },
+            }
+        }
+        fn close(&self) {
+            self.inner.close()
+        }
+        fn get_impl(&self) -> String {
+            String::from("(select)")
+        }
+    }
+
+    fn test1(c: &GoChan) -> bool {
+        let mut failed = false;
+        for _i in 0..3 {
+            // recv a close signal (a zero value)
+            if let Some(x) = c.recv() {
+                println!("test1: recv on closed: {} {}", x, c.get_impl());
+                failed = true
+            }
+
+            // should work with select: received a value without blocking, so selected == true.
+            if let Some(x) = c.nbrecv() {
+                println!("test1: recv on closed nb: {} {}", x, c.get_impl());
+                failed = true
+            }
+
+            // send should work with ,ok too: sent a value without blocking, so ok == true.
+            if let Ok(_) = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {}))
+            // FIXME c.nbsend(1)
+            {
+                //panic!("test1: no panic on nb send on closed channel");
+            }
+
+            // the value should have been discarded.
+            if let Some(x) = c.recv() {
+                println!(
+                    "test1: recv on closed got non-zero after send on closed: {} {}",
+                    x,
+                    c.get_impl(),
+                );
+                failed = true
+            }
+
+            // similarly Send.
+            //c.send(1);
+            if let Ok(_) = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {}))
+            // FIXME c.send(1)
+            {
+                //panic!("test1: no panic on send to closed channel");
+            }
+            if let Some(x) = c.recv() {
+                println!(
+                    "test1: recv on closed got non-zero after send on closed: {} {}",
+                    x,
+                    c.get_impl(),
+                );
+                failed = true
+            }
+        }
+        failed
+    }
+
+    fn testasync2(c: &GoChan) -> bool {
+        let mut failed = false;
+        match c.recv() {
+            Some(1) => {}
+            Some(x) => {
+                println!("testasync1: recv did not get 1: {} {}", x, c.get_impl());
+                failed = true
+            }
+            None => {
+                println!("testasync1: recv got nothing: {}", c.get_impl());
+                failed = true
+            }
+        }
+
+        // prevent short-circuit
+        let failed1 = test1(c);
+        failed || failed1
+    }
+
+    fn testasync4(c: &GoChan) -> bool {
+        let mut failed = false;
+        match c.nbrecv() {
+            Some(1) => {}
+            Some(x) => {
+                println!("testasync1: try_recv did not get 1: {} {}", x, c.get_impl());
+                failed = true
+            }
+            None => {
+                println!("testasync1: try_recv got nothing: {}", c.get_impl());
+                failed = true
+            }
+        }
+
+        // prevent short-circuit
+        let failed1 = test1(c);
+        failed || failed1
+    }
+
+    fn closedsync() -> Chan<i32> {
+        let c = make::<i32>(0);
+        c.close();
+        c
+    }
+
+    fn closedasync() -> Chan<i32> {
+        let c = make::<i32>(2);
+        c.send(1);
+        c.close();
+        c
+    }
+
+    #[test]
+    fn main() {
+        let mk_x = |c: Chan<i32>| XChan { inner: c };
+        let mk_s = |c: Chan<i32>| SChan { inner: c };
+        let mk_ss = |c: Chan<i32>| SSChan {
+            inner: c,
+            dummy: make::<i32>(0),
+        };
+
+        let mut failed = false;
+
+        // test1
+        let ch = mk_x(closedsync());
+        failed = test1(&ch) || failed;
+
+        let ch = mk_s(closedsync());
+        failed = test1(&ch) || failed;
+
+        let ch = mk_ss(closedsync());
+        failed = test1(&ch) || failed;
+
+        // testasync2
+        let ch = mk_x(closedasync());
+        failed = testasync2(&ch) || failed;
+
+        let ch = mk_s(closedasync());
+        failed = testasync2(&ch) || failed;
+
+        let ch = mk_ss(closedasync());
+        failed = testasync2(&ch) || failed;
+
+        // testasync2
+        let ch = mk_x(closedasync());
+        failed = testasync4(&ch) || failed;
+
+        let ch = mk_s(closedasync());
+        failed = testasync4(&ch) || failed;
+
+        let ch = mk_ss(closedasync());
+        failed = testasync4(&ch) || failed;
+
+        // rust catches this at compile time
+        // let c: Chan<i32>;
+        // c.close();
+
+        let c = make::<i32>(0);
+        c.close();
+        if let Ok(_) = ::std::panic::catch_unwind(|| c.close()) {
+            panic!("panic expected after second close");
+        }
+
+        if failed {
+            panic!("closechan test failed");
+        }
+    }
 }
 
 // https://github.com/golang/go/blob/master/src/runtime/chanbarrier_test.go
