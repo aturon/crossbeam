@@ -209,6 +209,84 @@ impl<T> ArrayQueue<T> {
         }
     }
 
+    /// Attempts to push an element into the queue without deadlocking.
+    ///
+    /// If the queue is full *or* if another operation would cause a potentially endless retry loop
+    /// (if the other operation is stalled) the element is returned back as an error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crossbeam_queue::{ArrayQueue, PushError};
+    ///
+    /// let q = ArrayQueue::new(1);
+    ///
+    /// assert_eq!(q.push(10), Ok(()));
+    /// assert_eq!(q.push(20), Err(PushError(20)));
+    /// ```
+    pub fn push_lockless(&self, value: T) -> Result<(), PushError<T>> {
+        let backoff = Backoff::new();
+        let mut tail = self.tail.load(Ordering::Relaxed);
+
+        loop {
+            // Deconstruct the tail.
+            let index = tail & (self.one_lap - 1);
+            let lap = tail & !(self.one_lap - 1);
+
+            // Inspect the corresponding slot.
+            let slot = unsafe { &*self.buffer.add(index) };
+            let stamp = slot.stamp.load(Ordering::Acquire);
+
+            // If the tail and the stamp match, we may attempt to push.
+            if tail == stamp {
+                let new_tail = if index + 1 < self.cap {
+                    // Same lap, incremented index.
+                    // Set to `{ lap: lap, index: index + 1 }`.
+                    tail + 1
+                } else {
+                    // One lap forward, index wraps around to zero.
+                    // Set to `{ lap: lap.wrapping_add(1), index: 0 }`.
+                    lap.wrapping_add(self.one_lap)
+                };
+
+                // Try moving the tail.
+                match self.tail.compare_exchange_weak(
+                    tail,
+                    new_tail,
+                    Ordering::SeqCst,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => {
+                        // Write the value into the slot and update the stamp.
+                        unsafe {
+                            slot.value.get().write(value);
+                        }
+                        slot.stamp.store(tail + 1, Ordering::Release);
+                        return Ok(());
+                    }
+                    Err(t) => {
+                        tail = t;
+                        backoff.spin();
+                    }
+                }
+            } else if stamp.wrapping_add(self.one_lap) == tail + 1 {
+                atomic::fence(Ordering::SeqCst);
+                let head = self.head.load(Ordering::Relaxed);
+
+                // If the head lags one lap behind the tail as well...
+                if head.wrapping_add(self.one_lap) == tail {
+                    // ...then the queue is full.
+                    return Err(PushError(value));
+                }
+
+                return Err(PushError(value));
+            } else {
+                // We need to wait for the stamp to get updated, but we cannot lock, so return
+                return Err(PushError(value));
+            }
+        }
+    }
+
     /// Attempts to pop an element from the queue.
     ///
     /// If the queue is empty, `None` is returned.
@@ -219,7 +297,7 @@ impl<T> ArrayQueue<T> {
     /// use crossbeam_queue::ArrayQueue;
     ///
     /// let q = ArrayQueue::new(1);
-    /// assert_eq!(q.push(10), Ok(()));
+    /// assert_eq!(q.push_lockless(10), Ok(()));
     ///
     /// assert_eq!(q.pop(), Some(10));
     /// assert!(q.pop().is_none());
@@ -283,6 +361,83 @@ impl<T> ArrayQueue<T> {
                 // Snooze because we need to wait for the stamp to get updated.
                 backoff.snooze();
                 head = self.head.load(Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Attempts to pop an element from the queue.
+    ///
+    /// If the queue is empty *or* if another operation would cause a potentially endless retry loop
+    /// (if the other operation is stalled) the element is returned back as an error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use crossbeam_queue::{ArrayQueue, PopError};
+    ///
+    /// let q = ArrayQueue::new(1);
+    /// assert_eq!(q.push(10), Ok(()));
+    ///
+    /// assert_eq!(q.pop_lockless(), Ok(10));
+    /// assert_eq!(q.pop_lockless(), Err(PopError));
+    /// ```
+    pub fn pop_lockless(&self) -> Result<T, PopError> {
+        let backoff = Backoff::new();
+        let mut head = self.head.load(Ordering::Relaxed);
+
+        loop {
+            // Deconstruct the head.
+            let index = head & (self.one_lap - 1);
+            let lap = head & !(self.one_lap - 1);
+
+            // Inspect the corresponding slot.
+            let slot = unsafe { &*self.buffer.add(index) };
+            let stamp = slot.stamp.load(Ordering::Acquire);
+
+            // If the the stamp is ahead of the head by 1, we may attempt to pop.
+            if head + 1 == stamp {
+                let new = if index + 1 < self.cap {
+                    // Same lap, incremented index.
+                    // Set to `{ lap: lap, index: index + 1 }`.
+                    head + 1
+                } else {
+                    // One lap forward, index wraps around to zero.
+                    // Set to `{ lap: lap.wrapping_add(1), index: 0 }`.
+                    lap.wrapping_add(self.one_lap)
+                };
+
+                // Try moving the head.
+                match self.head.compare_exchange_weak(
+                    head,
+                    new,
+                    Ordering::SeqCst,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => {
+                        // Read the value from the slot and update the stamp.
+                        let msg = unsafe { slot.value.get().read() };
+                        slot.stamp
+                            .store(head.wrapping_add(self.one_lap), Ordering::Release);
+                        return Ok(msg);
+                    }
+                    Err(h) => {
+                        head = h;
+                        backoff.spin();
+                    }
+                }
+            } else if stamp == head {
+                atomic::fence(Ordering::SeqCst);
+                let tail = self.tail.load(Ordering::Relaxed);
+
+                // If the tail equals the head, that means the channel is empty.
+                if tail == head {
+                    return Err(PopError);
+                }
+
+                return Err(PopError);
+            } else {
+                // We need to wait for the stamp to get updated, but we cannot lock, so return
+                return Err(PopError);
             }
         }
     }
