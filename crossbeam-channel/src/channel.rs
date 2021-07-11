@@ -6,6 +6,7 @@ use std::mem;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::borrow::Cow;
 
 use crate::context::Context;
 use crate::counter;
@@ -390,6 +391,43 @@ impl<T> Sender<T> {
             SenderFlavor::Array(chan) => chan.try_send(msg),
             SenderFlavor::List(chan) => chan.try_send(msg),
             SenderFlavor::Zero(chan) => chan.try_send(msg),
+        }
+    }
+
+    /// Attempts to send a message into the channel without blocking and without performing any work
+    /// if sending fails. This function uses a [Cow](https://doc.rust-lang.org/std/borrow/enum.Cow.html)
+    /// smart pointer to avoid the need for cloning the message contents if the receiving side is full
+    /// or disconnected.
+    ///
+    /// This method will either send a message into the channel immediately or return an error if
+    /// the channel is full or disconnected. The returned error contains the original Cow.
+    ///
+    /// If called on a zero-capacity channel, this method will send the message only if there
+    /// happens to be a receive operation on the other side of the channel at the same time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::borrow::Cow;
+    /// use crossbeam_channel::{bounded, TrySendError};
+    ///
+    /// let (s, r) = bounded(1);
+    ///
+    /// assert_eq!(s.try_send_cow(Cow::Borrowed(&1)), Ok(())); // Clone occurs
+    /// assert_eq!(s.try_send_cow(Cow::Owned(1)), Ok(())); // Clone does not occur
+    /// assert_eq!(s.try_send_cow(Cow::Borrowed(&2)), Err(TrySendError::Full(Cow::Borrowed(&2)))); // Clone does not occur
+    ///
+    /// drop(r);
+    /// assert_eq!(s.try_send_cow(Cow::Borrowed(&3)), Err(TrySendError::Disconnected(Cow::Borrowed(&3)))); // Clone does not occur
+    /// ```
+    pub fn try_send_cow<'a>(&self, msg: Cow<'a, T>) -> Result<(), TrySendError<Cow<'a, T>>>
+    where
+        T: ToOwned<Owned = T>
+    {
+        match &self.flavor {
+            SenderFlavor::Array(chan) => chan.try_send_cow(msg),
+            SenderFlavor::List(chan) => chan.try_send_cow(msg),
+            SenderFlavor::Zero(chan) => chan.try_send_cow(msg),
         }
     }
 

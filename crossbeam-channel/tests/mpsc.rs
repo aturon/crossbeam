@@ -24,6 +24,7 @@ use std::sync::mpsc::{RecvError, RecvTimeoutError, TryRecvError};
 use std::sync::mpsc::{SendError, TrySendError};
 use std::thread::JoinHandle;
 use std::time::Duration;
+use std::borrow::Cow;
 
 use crossbeam_channel as cc;
 
@@ -56,6 +57,16 @@ impl<T> SyncSender<T> {
 
     pub fn try_send(&self, t: T) -> Result<(), TrySendError<T>> {
         self.inner.try_send(t).map_err(|err| match err {
+            cc::TrySendError::Full(m) => TrySendError::Full(m),
+            cc::TrySendError::Disconnected(m) => TrySendError::Disconnected(m),
+        })
+    }
+
+    pub fn try_send_cow<'a>(&self, t: Cow<'a, T>) -> Result<(), TrySendError<Cow<'a, T>>>
+    where
+        T: ToOwned<Owned = T>
+    {
+        self.inner.try_send_cow(t).map_err(|err| match err {
             cc::TrySendError::Full(m) => TrySendError::Full(m),
             cc::TrySendError::Disconnected(m) => TrySendError::Disconnected(m),
         })
@@ -958,6 +969,7 @@ mod channel_tests {
 mod sync_channel_tests {
     use super::*;
 
+    use std::borrow::Cow;
     use std::env;
     use std::thread;
     use std::time::Duration;
@@ -1253,6 +1265,26 @@ mod sync_channel_tests {
     fn oneshot_single_thread_try_send_closed2() {
         let (tx, _rx) = sync_channel::<i32>(0);
         assert_eq!(tx.try_send(10), Err(TrySendError::Full(10)));
+    }
+
+    #[test]
+    fn oneshot_single_thread_try_send_cow_open() {
+        let (tx, rx) = sync_channel::<i32>(1);
+        assert_eq!(tx.try_send_cow(Cow::Owned(10)), Ok(()));
+        assert!(rx.recv().unwrap() == 10);
+    }
+
+    #[test]
+    fn oneshot_single_thread_try_send_cow_closed() {
+        let (tx, rx) = sync_channel::<i32>(0);
+        drop(rx);
+        assert_eq!(tx.try_send_cow(Cow::Owned(10)), Err(TrySendError::Disconnected(Cow::Owned(10))));
+    }
+
+    #[test]
+    fn oneshot_single_thread_try_send_cow_closed2() {
+        let (tx, _rx) = sync_channel::<i32>(0);
+        assert_eq!(tx.try_send_cow(Cow::Owned(10)), Err(TrySendError::Full(Cow::Owned(10))));
     }
 
     #[test]
@@ -1649,6 +1681,40 @@ mod sync_channel_tests {
         assert_eq!(tx.try_send(1), Ok(()));
         drop(rx);
         assert_eq!(tx.try_send(1), Err(TrySendError::Disconnected(1)));
+    }
+
+    #[test]
+    fn try_send_cow1() {
+        let (tx, _rx) = sync_channel::<i32>(0);
+        assert_eq!(tx.try_send_cow(Cow::Owned(1)), Err(TrySendError::Full(Cow::Owned(1))));
+
+        let (tx, _rx) = sync_channel::<i32>(0);
+        assert_eq!(tx.try_send_cow(Cow::Borrowed(&1)), Err(TrySendError::Full(Cow::Borrowed(&1))));
+    }
+
+    #[test]
+    fn try_send_cow2() {
+        let (tx, _rx) = sync_channel::<i32>(1);
+        assert_eq!(tx.try_send_cow(Cow::Owned(1)), Ok(()));
+        assert_eq!(tx.try_send_cow(Cow::Owned(1)), Err(TrySendError::Full(Cow::Owned(1))));
+
+        let (tx, _rx) = sync_channel::<i32>(1);
+        assert_eq!(tx.try_send_cow(Cow::Borrowed(&1)), Ok(()));
+        assert_eq!(tx.try_send_cow(Cow::Borrowed(&1)), Err(TrySendError::Full(Cow::Borrowed(&1))));
+    }
+
+    #[test]
+    fn try_send_cow3() {
+        let (tx, rx) = sync_channel::<i32>(1);
+        assert_eq!(tx.try_send_cow(Cow::Owned(1)), Ok(()));
+        drop(rx);
+        assert_eq!(tx.try_send_cow(Cow::Owned(1)), Err(TrySendError::Disconnected(Cow::Owned(1))));
+        drop(tx);
+
+        let (tx, rx) = sync_channel::<i32>(1);
+        assert_eq!(tx.try_send_cow(Cow::Borrowed(&1)), Ok(()));
+        drop(rx);
+        assert_eq!(tx.try_send_cow(Cow::Borrowed(&1)), Err(TrySendError::Disconnected(Cow::Borrowed(&1))));
     }
 
     #[test]

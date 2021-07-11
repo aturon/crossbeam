@@ -6,6 +6,7 @@ use std::mem::MaybeUninit;
 use std::ptr;
 use std::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
 use std::time::Instant;
+use std::borrow::Cow;
 
 use crossbeam_utils::{Backoff, CachePadded};
 
@@ -275,13 +276,9 @@ impl<T> Channel<T> {
         }
     }
 
-    /// Writes a message into the channel.
-    pub(crate) unsafe fn write(&self, token: &mut Token, msg: T) -> Result<(), T> {
-        // If there is no slot, the channel is disconnected.
-        if token.list.block.is_null() {
-            return Err(msg);
-        }
-
+    /// Writes a message into the channel. **Assumes the channel is NOT disconnected.**
+    #[inline]
+    unsafe fn write_unchecked(&self, token: &mut Token, msg: T) {
         // Write the message into the slot.
         let block = token.list.block as *mut Block<T>;
         let offset = token.list.offset;
@@ -291,6 +288,16 @@ impl<T> Channel<T> {
 
         // Wake a sleeping receiver.
         self.receivers.notify();
+    }
+
+    /// Writes a message into the channel.
+    pub(crate) unsafe fn write(&self, token: &mut Token, msg: T) -> Result<(), T> {
+        // If there is no slot, the channel is disconnected.
+        if token.list.block.is_null() {
+            return Err(msg);
+        }
+
+        self.write_unchecked(token, msg);
         Ok(())
     }
 
@@ -666,6 +673,44 @@ impl<T> Drop for Channel<T> {
             if !block.is_null() {
                 drop(Box::from_raw(block));
             }
+        }
+    }
+}
+
+impl<T: ToOwned<Owned = T>> Channel<T> {
+    /// Writes a message into the channel without cloning if writing fails.
+    pub(crate) unsafe fn write_cow<'a>(&self, token: &mut Token, msg: Cow<'a, T>) -> Result<(), Cow<'a, T>> {
+        // If there is no slot, the channel is disconnected.
+        if token.list.block.is_null() {
+            return Err(msg);
+        }
+
+        // Take ownership of/clone the underlying message.
+        let msg = msg.into_owned();
+
+        self.write_unchecked(token, msg);
+        Ok(())
+    }
+
+    /// Attempts to send a message into the channel without performing work if sending fails.
+    pub(crate) fn try_send_cow<'a>(&self, msg: Cow<'a, T>) -> Result<(), TrySendError<Cow<'a, T>>> {
+        self.send_cow(msg, None).map_err(|err| match err {
+            SendTimeoutError::Disconnected(msg) => TrySendError::Disconnected(msg),
+            SendTimeoutError::Timeout(_) => unreachable!(),
+        })
+    }
+
+    /// Sends a message into the channel without performing work if sending fails.
+    pub(crate) fn send_cow<'a>(
+        &self,
+        msg: Cow<'a, T>,
+        _deadline: Option<Instant>,
+    ) -> Result<(), SendTimeoutError<Cow<'a, T>>> {
+        let token = &mut Token::default();
+        assert!(self.start_send(token));
+        unsafe {
+            self.write_cow(token, msg)
+                .map_err(SendTimeoutError::Disconnected)
         }
     }
 }

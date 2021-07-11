@@ -6,6 +6,7 @@ use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
+use std::borrow::Cow;
 
 use crossbeam_utils::Backoff;
 
@@ -126,6 +127,14 @@ impl<T> Channel<T> {
             false
         }
     }
+    
+    /// Writes a message into the packet. **Assumes the channel is NOT disconnected.**
+    #[inline]
+    unsafe fn write_unchecked(&self, token: &mut Token, msg: T) {
+        let packet = &*(token.zero as *const Packet<T>);
+        packet.msg.get().write(Some(msg));
+        packet.ready.store(true, Ordering::Release);
+    }
 
     /// Writes a message into the packet.
     pub(crate) unsafe fn write(&self, token: &mut Token, msg: T) -> Result<(), T> {
@@ -134,9 +143,7 @@ impl<T> Channel<T> {
             return Err(msg);
         }
 
-        let packet = &*(token.zero as *const Packet<T>);
-        packet.msg.get().write(Some(msg));
-        packet.ready.store(true, Ordering::Release);
+        self.write_unchecked(token, msg);
         Ok(())
     }
 
@@ -361,6 +368,42 @@ impl<T> Channel<T> {
     /// Returns `true` if the channel is full.
     pub(crate) fn is_full(&self) -> bool {
         true
+    }
+}
+
+impl<T: ToOwned<Owned = T>> Channel<T> {
+    /// Writes a message into the channel without cloning if writing fails.
+    pub(crate) unsafe fn write_cow<'a>(&self, token: &mut Token, msg: Cow<'a, T>) -> Result<(), Cow<'a, T>> {
+        // If there is no packet, the channel is disconnected.
+        if token.zero == 0 {
+            return Err(msg);
+        }
+
+        // Take ownership of/clone the underlying message.
+        let msg = msg.into_owned();
+
+        self.write_unchecked(token, msg);
+        Ok(())
+    }
+
+    /// Attempts to send a message into the channel without performing work if sending fails.
+    pub(crate) fn try_send_cow<'a>(&self, msg: Cow<'a, T>) -> Result<(), TrySendError<Cow<'a, T>>> {
+        let token = &mut Token::default();
+        let mut inner = self.inner.lock();
+
+        // If there's a waiting receiver, pair up with it.
+        if let Some(operation) = inner.receivers.try_select() {
+            token.zero = operation.packet;
+            drop(inner);
+            unsafe {
+                self.write_cow(token, msg).ok().unwrap();
+            }
+            Ok(())
+        } else if inner.is_disconnected {
+            Err(TrySendError::Disconnected(msg))
+        } else {
+            Err(TrySendError::Full(msg))
+        }
     }
 }
 
